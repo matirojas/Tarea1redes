@@ -1,5 +1,6 @@
 import socket as libsock
 import struct
+import time
 
 addr = "127.0.0.1"
 
@@ -105,6 +106,7 @@ def server(port):
 
     print("listening on {}:{}...".format(addr, port))
     socket.bind((addr, port))
+
     while True:
         data, address = socket.recvfrom(1024)
         queries = decode_dns_message(data)
@@ -112,8 +114,12 @@ def server(port):
         type = queries['questions']['query_type']
         print(type)
         if (type == 28 or type == 1 or type == 15):
-            print("Wena")
-            #socket.connect(("8.8.8.8", 53))
+            fecha = time.strftime("%d/%m/%y") + " " + time.strftime("%H:%M:%S")
+            texto = str(address[0]) + " " + fecha + "\n"
+            logs = open("logs.txt", "a")
+            logs.write(texto)
+            logs.close()
+            # socket.connect(("8.8.8.8", 53))
             socket2.sendto(data, ("8.8.8.8", 53))
             data2, addr2 = socket2.recvfrom(1024)
             print("Respuesta", decode_dns_message(data2))
@@ -121,7 +127,6 @@ def server(port):
             socket.sendto(get_response(), address)
         else:
             print("malo")
-
 
 
 def main():
