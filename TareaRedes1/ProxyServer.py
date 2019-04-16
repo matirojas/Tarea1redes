@@ -11,23 +11,28 @@ def get_response():
 
 def decode_labels(message, offset):
     labels = []
-
     while True:
+        print("Loop")
         length, = struct.unpack_from("!B", message, offset)
 
         if (length & 0xC0) == 0xC0:
+            print("primer if")
             pointer, = struct.unpack_from("!H", message, offset)
             offset += 2
-
-            return labels + decode_labels(message, pointer & 0x3FFF), offset
+            return labels + decode_labels(message,pointer), offset
 
         if (length & 0xC0) != 0x00:
+            print("segundo if")
             raise StandardError("unknown label encoding")
 
         offset += 1
 
-        if length == 0:
+        if length == 0: #Se encuentra un byte= 0. Se termino qname
+            print("tercer if")
             return labels, offset
+
+        #Si llegamos aca, el length es el largo del label.
+        #a = "!%ds" % length;
 
         labels.append(*struct.unpack_from("!%ds" % length, message, offset))
         offset += length
@@ -61,10 +66,32 @@ def decode_mati(message, offset):
     question = {"domain_name": qname,
                 "query_type": qtype,
                 "query_class": qclass}
-    return question
+    return question, offset
+
+def decode_answer(message, offset):
+    offset+=2
+    a,b = struct.unpack_from("!2H", message, offset)
+    print("type",a)
+    print("class", b)
+    DNS_WEA = struct.Struct("!2H")
+
+    offset+=DNS_WEA.size
+    c = struct.unpack_from("!I", message, offset)
+    DNS_WEA2 = struct.Struct("!I")
+    offset+=DNS_WEA2.size
+    d = struct.unpack_from("!H", message, offset)
+
+    DNS_WEA3 = struct.Struct("!H")
+    offset += DNS_WEA3.size
+    e = struct.unpack_from("!%dB" % d[0], message, offset)
+
+    print("TTL ", c)
+    print("RDLENGTH ",d[0])
+    print("IP", e)
+    #print(e)
 
 
-DNS_QUERY_MESSAGE_HEADER = struct.Struct("!6H")
+DNS_QUERY_MESSAGE_HEADER = struct.Struct("!6h")
 
 
 def decode_dns_message(message):
@@ -80,7 +107,9 @@ def decode_dns_message(message):
     rcode = misc & 0xF
 
     offset = DNS_QUERY_MESSAGE_HEADER.size
-    question = decode_mati(message, offset)
+    question, offset = decode_mati(message, offset)
+    if(qr == True):
+        decode_answer(message, offset)
 
     result = {"id": id,
               "is_response": qr,
@@ -123,6 +152,7 @@ def server(port):
             socket2.sendto(data, ("8.8.8.8", 53))
             data2, addr2 = socket2.recvfrom(1024)
             print("Respuesta", decode_dns_message(data2))
+            print(data2)
             print(addr2)
             socket.sendto(get_response(), address)
         else:
