@@ -1,6 +1,8 @@
 import socket as libsock
 import struct
 import time
+from datetime import *
+import csv
 
 addr = "127.0.0.1"
 
@@ -41,6 +43,8 @@ def getQuestion(message, offset):
     return question, offset
 
 def getAnswer(message, offset, answerNumber):
+    #Agregar question type, para que sea el mismo
+    answers = []
     for _ in range(answerNumber):
         offset+=2
         type, rclass = struct.unpack_from("!2H", message, offset)
@@ -68,7 +72,7 @@ def getAnswer(message, offset, answerNumber):
                 else:
                     a += str(ip[i]) + "."
             offset += struct.Struct("!%dB" % rdlength[0]).size
-            print(a)
+            answers.append(a)
 
         elif (type == 28): #Caso AAAA
             ip = struct.unpack_from("!4H", message, offset)
@@ -87,26 +91,21 @@ def getAnswer(message, offset, answerNumber):
                     a += format(ip2[i], 'x')
                 else:
                     a += format(ip2[i], 'x') + ":"
-            print(a)
             offset += struct.Struct("!4H").size
+            answers.append(a)
         elif(type == 15):#Caso MX
-
             wea1 = struct.unpack_from("!2B", message, offset)
             offset += struct.Struct("!2B").size
-
-
-
             wea2, offset2 = getUrl(message, offset)
-
-
-            hola = rdlength[0] - 2
             offset = offset2
-            print(wea1[1])
-            print(wea2 + ".")
+            wea3 = str(wea1[1]) + " " + wea2 + "."
+
+            answers.append(wea3)
 
         else:
             DNSFinal = struct.Struct("!%dB" % rdlength[0])
             offset += DNSFinal.size
+    return answers
 
 
 
@@ -114,10 +113,11 @@ def getAnswer(message, offset, answerNumber):
 
 
 def translate(data):
-
     #Cambiar el nombre de dnsheader
     #Cambiar nombre de misc, qdcount, etc.
     #Sacar solo 4 valores, y sumarle mas al offset
+    answers = []
+
     DNSHeader = struct.Struct("!6h")
     _, misc, qdcount, ancount, _, _ = DNSHeader.unpack_from(data)
     qr = (misc & 0x8000) != 0
@@ -134,11 +134,11 @@ def translate(data):
               "question": question}
 
     if(qr == True):
-        getAnswer(data, offset, ancount)
+        answers = getAnswer(data, offset, ancount)
 
-    return message
+    return message, answers
 
-def server(port):
+def server(port, resolver):
     socketClient = libsock.socket(libsock.AF_INET, libsock.SOCK_DGRAM)
     socketServer = libsock.socket(libsock.AF_INET, libsock.SOCK_DGRAM)
     print("Escuchando en {}:{}...".format(addr, port))
@@ -146,7 +146,7 @@ def server(port):
 
     while True:
         questionRaw, address = socketClient.recvfrom(1024)
-        question = translate(questionRaw)
+        question, _ = translate(questionRaw)
         print("Pregunta:", question)
         type = question['question']['type']
         if (type == 28 or type == 1 or type == 15):
@@ -155,10 +155,30 @@ def server(port):
             #logs = open("logs.txt", "a")
             #logs.write(texto)
             #logs.close()
-            #socket.connect(("8.8.8.8", 53))
-            socketServer.sendto(questionRaw, ("8.8.8.8", 53))
+            socketServer.sendto(questionRaw, (resolver, 53))
             responseRaw, addressServer = socketServer.recvfrom(1024)
-            print("Respuesta", translate(responseRaw))
+            response, answers = translate(responseRaw)
+
+            escribir = 1
+            data = [question['question']['domain_name'],answers[0]]
+            with open('cache.csv', 'r') as file:
+                csv_reader = csv.reader(file)
+                for line in csv_reader:
+                    if line[0]==question['question']['domain_name']:
+                        response = line[1]
+                        escribir = 0
+                    else:
+                        print("escribir nueva fila")
+                        escribir = 1
+            file.close()
+            if escribir:
+                print("estoy aquii")
+                with open('cache.csv', 'a') as file:
+                    csv_writer = csv.writer(file)
+                    csv_writer.writerow(data)
+            file.close()
+
+
             socketClient.sendto(responseRaw, address)
         else:
             socketClient.sendto(questionRaw, address)
@@ -166,6 +186,7 @@ def server(port):
 
 def main():
     port = input("Ingrese su puerto: ")
-    server(int(port))
+    resolver = input("Ingrese el resolver: ")
+    server(int(port), resolver)
 
 main()
