@@ -1,10 +1,12 @@
 import socket as libsock
 import struct
 import time
-from datetime import *
+from datetime import datetime
+from datetime import timedelta
 import csv
 
 addr = "127.0.0.1"
+
 
 def getUrl(message, offset):
     url = ""
@@ -15,7 +17,6 @@ def getUrl(message, offset):
             pointer, = struct.unpack_from("!H", message, offset)
             offset += 2
             return url + getUrl(message,pointer & 0x3FFF)[0], offset
-
 
         offset += 1
 
@@ -107,11 +108,6 @@ def getAnswer(message, offset, answerNumber):
             offset += DNSFinal.size
     return answers
 
-
-
-
-
-
 def translate(data):
     #Cambiar el nombre de dnsheader
     #Cambiar nombre de misc, qdcount, etc.
@@ -149,28 +145,62 @@ def server(port, resolver):
         question, _ = translate(questionRaw)
         print("Pregunta:", question)
         type = question['question']['type']
+        noAnswer = False  ## Si esta variable es true entonces no hay que mandar respuesta
+
         if (type == 28 or type == 1 or type == 15):
-            #fecha = time.strftime("%d/%m/%y") + " " + time.strftime("%H:%M:%S")
-            #texto = str(address[0]) + " " + fecha + "\n"
-            #logs = open("logs.txt", "a")
-            #logs.write(texto)
-            #logs.close()
+
             socketServer.sendto(questionRaw, (resolver, 53))
             responseRaw, addressServer = socketServer.recvfrom(1024)
             response, answers = translate(responseRaw)
 
             escribir = 1
-            data = [question['question']['domain_name'],answers[0]]
-            with open('cache.csv', 'r') as file:
-                csv_reader = csv.reader(file)
+            data = [question['question']['domain_name'],answers[0], datetime.now(),0]
+
+            ## Aqui revisamos si esta en la lista negra, en dicho caso no mandamos respuesta.
+
+            with open('noAnswer.csv','r') as f:
+                csv_reader = csv.reader(f)
                 for line in csv_reader:
+                    if line[0]==data[0]:
+                        noAnswer = True
+            f.close()
+
+            if noAnswer:
+                break
+
+            with open('cache.csv', 'r') as file:
+                lista = list(csv.reader(file))
+                for line in lista:
                     if line[0]==question['question']['domain_name']:
-                        response = line[1]
-                        escribir = 0
+                        thatFecha = datetime.strptime(line[2], '%Y-%m-%d %H:%M:%S.%f')
+                        thatFecha2 = thatFecha + timedelta(hours=1)
+                        if(thatFecha2 > datetime.now()):
+                            print("mantener cache")
+                            response = line[1]
+                            escribir = 0
+                        else:
+                            print("borrar cache")
+                            line[3]=1
+                            print("linea a borrar",line)
+                            #borrar cache
+                            escribir = 1
                     else:
                         print("escribir nueva fila")
                         escribir = 1
             file.close()
+
+            fa = open("cache.csv", "w")
+            fa.truncate()
+            fa.close()
+
+            with open('cache.csv', 'a') as f:
+                writer = csv.writer(f)
+                print(lista)
+                for line in lista:
+                    if line[3] =='0':
+                        writer.writerow(line)
+            f.close()
+
             if escribir:
                 print("estoy aquii")
                 with open('cache.csv', 'a') as file:
@@ -178,11 +208,15 @@ def server(port, resolver):
                     csv_writer.writerow(data)
             file.close()
 
+            fecha = time.strftime("%d/%m/%y") + " " + time.strftime("%H:%M:%S")
+            texto = str(address[0]) + " " + fecha + " " + answers[0] +"\n"
+            logs = open("logs.txt", "a")
+            logs.write(texto)
+            logs.close()
 
             socketClient.sendto(responseRaw, address)
         else:
             socketClient.sendto(questionRaw, address)
-
 
 def main():
     port = input("Ingrese su puerto: ")
