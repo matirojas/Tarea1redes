@@ -9,49 +9,37 @@ import ast
 
 addr = "127.0.0.1"
 
+#Cambia el url de la consulta DNS RAW
 def changeUrl(data, newUrl):
     DNSHeader = struct.Struct("!6h")
 
     offset1 = DNSHeader.size
-
-    #DNSQuestion = struct.Struct("!2H")
     _, offset2 = getUrl(data, offset1)
-
-    #print(data[0:offset1]) #header
-    #print(data[offset1:offset2]) #cambiar
-    #print(data[offset2:])#el resto
-
     urlBytes = packUrl(newUrl)
 
     result = data[0:offset1] + urlBytes + data[offset2:]
 
-    print("Resultado", result)
-
     return result
 
-
+#Convierte una url en bytes, con el formato para consultas DNS
 def packUrl(url):
     arr = url.split(".")
     result= b''
-    print(arr)
     for i in range(0,len(arr)):
-        print(arr[i])
         s = bytes(arr[i], 'utf-8')
         result+= struct.pack("!B", len(s))
         result+= struct.pack("!%ds" % (len(s)), s)
     result+= struct.pack("!B", 0)
     return result
 
-
+# Devuelve un boolean si el dominio tiene que ser respondido.
+# Aqui, se lee el archivo 'noAnswer.csv' en cada fila se tiene el nombre de
+# los dominios que no hay que responder
 def getNoAnswer(domainName):
-    print("getNoAnswer()")
     noAnswer = False
     with open('noAnswer.csv', 'r') as f:
         csv_reader = csv.reader(f)
         for line in csv_reader:
-            print(line)
-            print(line[0])
-            print(domainName)
             if noAnswer:
                 break
             if line[0]==domainName:
@@ -59,6 +47,10 @@ def getNoAnswer(domainName):
         f.close()
     return noAnswer
 
+# Devuelve un boolean si el dominio hay que redirigirlo o no.
+# Si es que hay que redirigirlo, devuelve también la url a redirigir.
+# Se lee el archivo 'redirecciones.csv'. La primera columna es la
+# url que hay que redirigir, y la segunda es la url a la cual uno se redirige.
 def getRedirect(domainName):
     redirect = False
     redirectUrl = None
@@ -73,18 +65,21 @@ def getRedirect(domainName):
         f.close()
     return redirect, redirectUrl
 
-
-
+# Devuelve el id de la consulta DNS
 def getIdHeader(data):
     DNSHeader = struct.Struct("!H")
     headerId = DNSHeader.unpack_from(data)
     return headerId
 
+# Cambia el id del header del segundo argumento (response), con el del primero (question)
 def changeHeader(question, response):
     headerQuestion = question[0:2]
     restResponse =  response[2:]
     return headerQuestion + restResponse
 
+# Escribe en el archivo "logs.txt".
+# Escribe los logs del servidor. La primera columna es el hostname, la segunda la fecha
+# y la tercera la IP de respuesta
 def logManager(address, answer):
     fecha = time.strftime("%d/%m/%y") + " " + time.strftime("%H:%M:%S")
     texto = address  + " " + fecha + " " + answer + "\n"
@@ -92,15 +87,20 @@ def logManager(address, answer):
     logs.write(texto)
     logs.close()
 
-def cacheFilter(domain, tipo):
+# Busca en la cache un dominio con el tipo de consulta. En caso de no encontrar, retorna None.
+# Si es que ya se ha realizado y no se ha terminado su tiempo de vida, se devuelve el valor
+# asociado al cache. En caso que se termino su tiempo de vida, se borra del cache y se retorna
+# None.
+# El formato del cache son con las columnas:
+# [0]"nombre de dominio" - [1]"tipo de consulta" - [2]"respuesta" - [3]"fecha de la consulta" - [4]"booleano eliminar"
+def cacheFilter(domain, tipo, horas):
     cacheResponse = None
     with open('cache.csv', 'r') as file:
         lista = list(csv.reader(file))
         for line in lista:
-            print(line)
             if line[0] == domain and line[1] == str(tipo):
                 queryDate = datetime.strptime(line[3], '%Y-%m-%d %H:%M:%S.%f')
-                queryDateMax = queryDate + timedelta(hours=1)
+                queryDateMax = queryDate + timedelta(hours=horas)
 
                 if queryDateMax > datetime.now():
                     #Mantener cache y usar respuesta
@@ -108,8 +108,6 @@ def cacheFilter(domain, tipo):
                 else:
                     #Borrar cache
                     line[4] = 1
-            #else:
-            #    escribir = 1
     file.close()
 
     fa = open("cache.csv", "w")
@@ -118,7 +116,6 @@ def cacheFilter(domain, tipo):
 
     with open('cache.csv', 'a') as f:
         writer = csv.writer(f)
-        print(lista)
         for line in lista:
             if line[4] == '0':
                 writer.writerow(line)
@@ -126,6 +123,7 @@ def cacheFilter(domain, tipo):
 
     return cacheResponse
 
+# Escribe un valor "data" en el cache.
 def cacheWrite(data):
     with open('cache.csv', 'a') as file:
             csv_writer = csv.writer(file)
@@ -144,31 +142,27 @@ def getUrl(message, offset):
 
         offset += 1
 
-        if length == 0: #Se encuentra un byte= 0. Se termino qname
+        if length == 0: #Se encuentra un byte= 0. Se termino el nombre del dominio
             url = url[:-1]
             return url, offset
-
-        #Si llegamos aca, el length es el largo del label.
-        #a = "!%ds" % length;
 
         element = struct.unpack_from("!%ds" % length, message, offset)
         url += element[0].decode('utf-8') + "."
         offset += length
 
-
+# Obtiene una pregunta y el offset de la consulta DNS Raw
 def getQuestion(message, offset):
-    #Cambiar nombre valores
     DNSQuestion = struct.Struct("!2H")
-    qname, offset = getUrl(message, offset)
-    qtype, qclass = DNSQuestion.unpack_from(message, offset)
+    domainName, offset = getUrl(message, offset)
+    tipo, _ = DNSQuestion.unpack_from(message, offset)
     offset += DNSQuestion.size
-    question = {"domain_name": qname,
-                "type": qtype,
-                "query_class": qclass}
+    question = {"domain_name": domainName,
+                "type": tipo,
+                }
     return question, offset
 
+# Obtiene las respuestas de una consulta DNS Raw
 def getAnswer(message, offset, answerNumber, questionType):
-    #Agregar question type, para que sea el mismo
     answers = []
     for _ in range(answerNumber):
         offset+=2
@@ -180,16 +174,15 @@ def getAnswer(message, offset, answerNumber, questionType):
         TTL = struct.unpack_from("!I", message, offset)
 
         DNS2 = struct.Struct("!I")
+
         offset+=DNS2.size
 
         rdlength = struct.unpack_from("!H", message, offset)
 
         DNS3 = struct.Struct("!H")
         offset += DNS3.size
-        print("RDLENGTH ",rdlength[0])
         if type == 1 and questionType == type: #Caso A
             ip = struct.unpack_from("!%dB" % rdlength[0], message, offset)
-            print("IP", ip)
             a = ""
             for i in range(len(ip)):
                 if(i == len(ip)-1):
@@ -201,7 +194,6 @@ def getAnswer(message, offset, answerNumber, questionType):
 
         elif type == 28 and questionType == type: #Caso AAAA
             ip = struct.unpack_from("!4H", message, offset)
-            print("IP", ip)
             a = ""
             for i in range(len(ip)):
                 if (i == len(ip) - 1):
@@ -219,46 +211,39 @@ def getAnswer(message, offset, answerNumber, questionType):
             offset += struct.Struct("!4H").size
             answers.append(a)
         elif type == 15 and questionType == type:#Caso MX
-            wea1 = struct.unpack_from("!2B", message, offset)
+            a = struct.unpack_from("!2B", message, offset)
             offset += struct.Struct("!2B").size
-            wea2, offset2 = getUrl(message, offset)
+            b, offset2 = getUrl(message, offset)
             offset = offset2
-            wea3 = str(wea1[1]) + " " + wea2 + "."
-
-            answers.append(wea3)
+            c = str(a[1]) + " " + b + "."
+            answers.append(c)
 
         else:
             DNSFinal = struct.Struct("!%dB" % rdlength[0])
             offset += DNSFinal.size
     return answers
 
+# Retorna la pregunta y las respuestas (si es que tiene) de una consulta DNS.
 def translate(data):
-    #Cambiar el nombre de dnsheader
-    #Cambiar nombre de misc, qdcount, etc.
-    #Sacar solo 4 valores, y sumarle mas al offset
     answers = []
 
     DNSHeader = struct.Struct("!6h")
-    id, misc, qdcount, ancount, _, _ = DNSHeader.unpack_from(data)
-    qr = (misc & 0x8000) != 0
-    rcode = misc & 0xF
+    _, x, _, answerNumber, _, _ = DNSHeader.unpack_from(data)
+    answerQuery = (x & 0x8000) != 0
 
     offset = DNSHeader.size
 
     question, offset = getQuestion(data, offset)
 
-    message = {"is_response": qr,
-              "response_code": rcode,
-              "question_count": qdcount,
-              "answer_count": ancount,
-              "question": question}
 
-    if(qr == True):
-        answers = getAnswer(data, offset, ancount, question['type'])
+    if answerQuery:
+        answers = getAnswer(data, offset, answerNumber, question['type'])
 
-    return message, answers
+    return question, answers
 
-def server(port, resolver):
+# Funcion principal del servidor. El primer argumento es el puerto, el segundo el resolver utilizado y
+# el ultimo, la cantidad de horas de vida del cache.
+def server(port, resolver, horas):
     socketClient = libsock.socket(libsock.AF_INET, libsock.SOCK_DGRAM)
     socketServer = libsock.socket(libsock.AF_INET, libsock.SOCK_DGRAM)
     print("Escuchando en {}:{}...".format(addr, port))
@@ -267,9 +252,8 @@ def server(port, resolver):
     while True:
         questionRaw, address = socketClient.recvfrom(1024)
         question, _ = translate(questionRaw)
-        print("Pregunta:", question)
-        tipo = question['question']['type']
-        domainName = question['question']['domain_name']
+        tipo = question['type']
+        domainName = question['domain_name']
         noAnswer = getNoAnswer(domainName)
 
         redirect, redirectUrl = getRedirect(domainName)
@@ -277,11 +261,11 @@ def server(port, resolver):
         if (tipo == 28 or tipo == 1 or tipo == 15) and  redirect and not noAnswer:
             changedQuestion = changeUrl(questionRaw, redirectUrl)
             question, _ = translate(changedQuestion)
-            tipo = question['question']['type']
+            tipo = question['type']
             originalDomainName = domainName
-            domainName = question['question']['domain_name']
+            domainName = question['domain_name']
 
-            cacheResponse = cacheFilter(domainName, tipo)
+            cacheResponse = cacheFilter(domainName, tipo, horas)
             resolverResponse = None
 
             if cacheResponse is None:
@@ -303,7 +287,7 @@ def server(port, resolver):
 
         elif (tipo == 28 or tipo == 1 or tipo == 15) and not noAnswer:
 
-            cacheResponse = cacheFilter(domainName, tipo)
+            cacheResponse = cacheFilter(domainName, tipo, horas)
             resolverResponse = None
 
             if cacheResponse is None:
@@ -319,16 +303,17 @@ def server(port, resolver):
 
             socketClient.sendto(resolverResponse, address)
             _, answers = translate(resolverResponse)
-            print("answers:", answers)
             logManager(address[0], answers[0])
 
         else:
             print("no response")
             socketClient.sendto(questionRaw, address)
 
+# Funcion principal
 def main():
     port = input("Ingrese su puerto: ")
     resolver = input("Ingrese el resolver: ")
-    server(int(port), resolver)
+    horas = input("Tiempo de vida del cache en horas: ")
+    server(int(port), resolver, int(horas))
 
 main()
